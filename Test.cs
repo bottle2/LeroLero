@@ -1,48 +1,49 @@
 using System;
 using System.Reflection;
-using Sustem.Type;
 
-struct OwlExportAttribute { }
+internal struct OwlExportAttribute { }
 
-class Program
+internal class Program
 {
-    static void Main(string[] args)
+    static void Main(string[] _)
     {
+        var a = new PizzaMushroom();
+
         Console.WriteLine("Hello, world!");
     }
 }
 
-abstract class Topping { }
+internal abstract class Topping { }
 
-abstract class ToppingVeggie : Topping { }
+internal abstract class ToppingVeggie : Topping { }
 
-abstract class ToppingCheese : ToppingVeggie { }
+internal abstract class ToppingCheese : ToppingVeggie { }
 
-class Mushroom : ToppingVeggie { }
+internal class Mushroom : ToppingVeggie { }
 
-class Tomato : ToppingVeggie { }
+internal class Tomato : ToppingVeggie { }
 
-class Mozzarella : ToppingCheese { }
+internal class Mozzarella : ToppingCheese { }
 
-abstract class Pizza
+internal abstract class Pizza
 {
     internal Topping[] toppings;
 }
 
-abstract class PizzaVeggie : Pizza { }
+internal abstract class PizzaVeggie : Pizza { }
 
-class Margherita : PizzaVeggie
+internal class Margherita : PizzaVeggie
 {
-    Margherita()
+    internal Margherita()
     {
-        toppings = new Topping[]{ new Mozzarella(), new Tomato() };
+        toppings = [new Mozzarella(), new Tomato()];
     }
 }
 
-class PizzaMushroom : Pizza
+internal class PizzaMushroom : Pizza
 {
-    PizzaMushroom()
+    internal PizzaMushroom()
     {
-        toppings = new Topping[]{ new Mozzarella(), new Mushroom() };
+        toppings = [new Mozzarella(), new Mushroom()];
     }
 }
