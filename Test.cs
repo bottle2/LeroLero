@@ -1,64 +1,135 @@
 using System.Collections;
 using System.Reflection;
-using VDS.RDF;
-using VDS.RDF.Ontology;
-using VDS.RDF.Writing;
+
+// XXX Coisas parecidas?
+// https://github.com/dotnetrdf/dotnetrdf/discussions/594
+// - https://github.com/giacomociti/iride
+// - https://github.com/EcoStruxure/OLGA
+// - https://github.com/ukparliament/Mapping
 
 internal struct OwlExportAttribute { }
 
 internal class Program
 {
-    private static OntologyGraph g;
     static void Main()
     {
-        Console.WriteLine("Hello, world!");
+        // TODO Devia ser um URI ou um (uuuuuuuuuurgh) "IRI".
+        string @namespace = "http://pizza.com";
+        // TODO E o caminho pra salvar? Atualmente vai pra pasta do projeto/bin/Debug/net8.0/
+        string filename = "pizza";
 
-        g = new OntologyGraph(UriFactory.Create("http://pizza.com"));
-        g.NamespaceMap.AddNamespace("pizza", UriFactory.Create("http://pizza.com"));
+        // TODO Deveria ir para uma classe que cuida da reflexão
+        using StreamWriter sw = new($"{filename}.omn", false, System.Text.Encoding.UTF8);
+        sw.WriteLine($"Prefix: : <{@namespace}/>");
+        sw.WriteLine($"Ontology: <{@namespace}>");
 
-        _ = Traverse(new PizzaMushroom());
-        _ = Traverse(new Margherita());
+        // TODO Arrancar fora esssas coleções e botar dentro de uma classe de instância.
+        Dictionary<object, List<string>> individuals = [];
+        HashSet<string> allIndividualNames = [];
+        HashSet<Type?> classes = [typeof(object), null]; // TODO Deveria botar ValueType pra excluir
+                                                         // mais tipos, mas talvez devesse excluir um
+                                                         // monte de tipos que o usuário poderia estender?
+                                                         // Ou talvez o usuário devesse colocar um atributo
+                                                         // na classe pai que deve "parar"...
 
-        new RdfXmlWriter().Save(g, "pizza.rdf");
-    }
+        // TODO MemberInfo não é imutável, por causa do contexto. Não deveríamos estar usando tuplas...
+        HashSet<(Type, string, Type)> properties = [];
 
-    static Individual Traverse(object any)
-    {
-        Type leType = any.GetType();
+        Traverse(new PizzaMushroom(), "mushroomPizza");
+        Traverse(new Margherita(), "margheritaPizza");
 
-        OntologyClass previous = g.CreateOntologyClass(g.CreateUriNode($"pizza:{leType.Name}"));
-        var individual = g.CreateIndividual(g.CreateUriNode($"pizza:{leType.Name}Individual"), previous.Resource);
-
-        foreach (var hey in leType.FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic, (m, fc) => true, null))
+        // TODO Deveria ir para uma classe que cuida da reflexão
+        string Traverse(object o, string name)
         {
-            Console.WriteLine(hey);
-            var valor = ((FieldInfo)hey).GetValue(any);
-            if (valor!.GetType().IsAssignableTo(typeof(IEnumerable)))
+            if (individuals.TryGetValue(o, out List<string> aliases))
             {
-                Console.WriteLine("is some collection");
-                foreach (object obj in (IEnumerable)valor)
+                if (aliases.Contains(name))
+                    return name;
+                else
                 {
-                    // TODO
-                    // Precisa criar uma propriedade, aí faz um assert que não é assert entre dois
-                    // individuos.
-
-                    //Individual other = Traverse(obj);
-                    //var prop = g.CreateOntologyProperty(g.CreateUriNode($"pizza:{hey.Name}"));
-                    //prop.add
-                    //g.Assert(individual.Resource, prop.Resource, other.Resource);
-                    //individual.AddResourceProperty($"pizza:{hey.Name}", other.Resource, true);
+                    aliases.Add(UniqueIndividualName(name));
+                    sw.WriteLine($"Individual: {aliases[^1]}");
+                    sw.WriteLine($"  SameAs: {aliases[0]}");
+                    return aliases[0];
                 }
+            }
+            else
+            {
+                for (
+                    Type? current = o.GetType(), parent = current.BaseType;
+                    !classes.Contains(current);
+                    classes.Add(current), current = parent, parent = parent.BaseType
+                ) {
+                    sw.WriteLine($"Class: {current.Name}");
+                    if (parent != typeof(object))
+                        sw.WriteLine($"  SubClassOf: {parent!.Name}");
+
+                    // TODO Deveríamos buscar propriedades também, além de atributos
+                    // TODO Reconsiderar outros BindingFlag, tipo pegar os públicos?
+                    foreach (var p in current.FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, (m, fc) => true, null))
+                    {
+                        if (p is FieldInfo fi)
+                        {
+                            Type domain = current;
+                            string relation = p.Name;
+                            // TODO Nem sei se isso funciona! Só tava preocupado com Topping[] quando escrevi.
+                            // TODO Se o tipo for não gerenciado como inteiro ou string, deveria ser um "DataProperty" ao invés de "ObjectPropert" no Manchester gerado
+                            // TODO Ver se funciona com coisas que não são descendentes de IEnumerable, como um atributo comum ou um Dictionary
+                            Type range = fi.FieldType.IsAssignableTo(typeof(IEnumerable)) ? fi.FieldType.GetElementType() : fi.FieldType;
+
+                            if (properties.Add((domain, relation, range)))
+                            {
+                                // TODO Essa coisa de has{} e is{]Of é claramente uma gambiarra
+                                //      Criar uma anotação pro usuário dizer o nome das relações inversas, caso sejam inversas sequer!
+                                sw.WriteLine($"ObjectProperty: has{p.Name}");
+                                sw.WriteLine($"  Domain:    {domain.Name}");
+                                sw.WriteLine($"  Range:     {range.Name}");
+                                sw.WriteLine($"  InverseOf: is{p.Name}Of");
+                                sw.WriteLine($"ObjectProperty: is{p.Name}Of");
+                            }
+                        }
+                    }
+                }
+
+                name = UniqueIndividualName(name);
+                individuals.Add(o, [name]);
+
+                // XXX Importante isso aqui por causa da recursão!
+                List<(string, string)> postpone = [];
+
+                foreach (var p in o.GetType().FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic, (m, fc) => true, null))
+                {
+                    if (p is FieldInfo fi)
+                    {
+                        // XXX Ontologias não tem listas
+                        //     Então repetimos várias vezes a mesma relação!
+                        var valor = fi.GetValue(o);
+                        if (valor!.GetType().IsAssignableTo(typeof(IEnumerable)))
+                        {
+                            foreach (object obj in (IEnumerable)valor)
+                                postpone.Add(("has" + fi.Name, Traverse(obj, obj.GetType().Name)));
+                        }
+                    }
+                }
+
+                sw.WriteLine($"Individual: {name}");
+                sw.WriteLine($"  Types: {o.GetType().Name}");
+                foreach ((string relation, string indi) in postpone)
+                    sw.WriteLine($"  Facts: {relation} {indi}");
+
+                return name;
             }
         }
 
-        for (Type current = leType.BaseType!; current != null && current != typeof(object); current = current.BaseType!)
+        string UniqueIndividualName(string name)
         {
-            OntologyClass lala = g.CreateOntologyClass(g.CreateUriNode($"pizza:{current.Name}"));
-            previous.AddSuperClass(lala);
-            previous = lala;
-        }
+            while (allIndividualNames.Contains(name))
+            {
+                name += " - (Copia)"; // Toma Windows venceu.
+            }
 
-        return individual;
+            return name;
+        }
     }
 }
 
@@ -66,7 +137,7 @@ internal abstract class Topping { }
 
 internal abstract class ToppingVeggie : Topping { }
 
-internal abstract class ToppingCheese : ToppingVeggie { }
+internal abstract class ToppingCheese : Topping { }
 
 internal class Mushroom : ToppingVeggie { }
 
