@@ -3,6 +3,16 @@ using System.Reflection;
 
 internal struct OwlExportAttribute { }
 
+internal class OwlDisjointWithAttribute : Attribute
+{
+    internal Type[] types;
+
+    internal OwlDisjointWithAttribute(params Type[] types)
+    {
+        this.types = types;
+    }
+}
+
 internal class OwlGenerator
 {
     internal struct OwlProperty
@@ -160,6 +170,14 @@ internal class OwlGenerator
             sw.WriteLine($"Class: {@class.Name}");
             if (@class.BaseType != typeof(object))
                 sw.WriteLine($"  SubClassOf: {@class.BaseType!.Name}");
+            foreach (var attribute in Attribute.GetCustomAttributes(@class))
+            {
+                if (attribute is OwlDisjointWithAttribute disjointWith)
+                {
+                    foreach (Type type in disjointWith.types)
+                        sw.WriteLine($"  DisjointWith: {type.Name}");
+                }
+            }
             sw.WriteLine();
         }
 
