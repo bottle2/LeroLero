@@ -5,6 +5,8 @@ internal struct OwlExportAttribute { }
 
 internal class OwlDisjointWithAttribute : Attribute
 {
+    // TODO Gerar erro se a classe que possui
+    // o atributo estiver incluída na lista
     internal Type[] types;
 
     internal OwlDisjointWithAttribute(params Type[] types)
@@ -199,11 +201,18 @@ internal class OwlGenerator
 
     private string UniqueIndividualName(string name)
     {
-        while (allIndividualNames.Contains(name))
+        for (int i = 1; i <= 100; i++)
         {
-            name += " - (Copia)"; // Toma Windows venceu.
+            // O nome do indivíduo é diferente da
+            // classe para os links no Protégé
+            // irem para os indivíduos
+            string uniqueName = $"{name}_{i}";
+            if (!allIndividualNames.Contains(uniqueName))
+            {
+                allIndividualNames.Add(uniqueName);
+                return uniqueName;
+            }
         }
-
-        return name;
+        throw new ArgumentException("Quantidade de indivíduos para classe excedida!", nameof(name));
     }
 }
