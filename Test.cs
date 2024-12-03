@@ -8,7 +8,7 @@ internal class Program
 {
     static void Main()
     {
-        OwlGenerator owl = new OwlGenerator("http://pizza.com");
+        OwlGenerator owl = new OwlGenerator("http://pizza.com", "A ontology for Pizza");
         owl.AddIndividual(new PizzaMushroom(), "mushroomPizza");
         owl.AddIndividual(new Margherita(), "margheritaPizza");
         owl.AddIndividual(new Person(19, 1.77f, "Paula Tejante", true, BloodType.A_PLUS));
@@ -26,17 +26,14 @@ internal abstract class Topping { }
 
 internal abstract class ToppingVeggie : Topping { }
 
-[OwlDisjointWith(typeof(ToppingVeggie))]
 internal abstract class ToppingCheese : Topping { }
 
 internal class Mushroom : ToppingVeggie { }
 
-[OwlDisjointWith(typeof(Mushroom))]
 internal class Tomato : ToppingVeggie { }
 
 internal class Mozzarella : ToppingCheese { }
 
-[OwlDisjointWith(typeof(Topping))]
 internal abstract class Pizza
 {
     internal Topping[] toppings;
@@ -44,6 +41,7 @@ internal abstract class Pizza
 
 internal abstract class PizzaVeggie : Pizza { }
 
+[OwlComment("A pizza that has Mozzarella and Tomato toppings")]
 internal class Margherita : PizzaVeggie
 {
     internal Margherita()
@@ -52,7 +50,6 @@ internal class Margherita : PizzaVeggie
     }
 }
 
-[OwlDisjointWith(typeof(PizzaVeggie))]
 internal class PizzaMushroom : Pizza
 {
     internal PizzaMushroom()

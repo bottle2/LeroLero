@@ -4,22 +4,6 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
-internal struct OwlExportAttribute { }
-internal class OwlIndividualNameAttribute : Attribute { }
-
-internal class OwlDisjointWithAttribute : Attribute
-{
-    // TODO Gerar erro se a classe que possui
-    // o atributo estiver incluída na lista
-    internal Type[] types;
-
-    internal OwlDisjointWithAttribute(params Type[] types)
-    {
-        this.types = types;
-    }
-}
-
-
 internal class OwlGenerator
 {
     internal struct OwlProperty
@@ -63,6 +47,7 @@ internal class OwlGenerator
 
     // TODO Devia ser um URI ou um (uuuuuuuuuurgh) "IRI".
     internal string @namespace = "http://pizza.com";
+    internal string comment;
 
     // TODO MemberInfo não é imutável, por causa do contexto. Não deveríamos estar usando tuplas...
     internal HashSet<OwlProperty> properties = [];
@@ -77,9 +62,10 @@ internal class OwlGenerator
     internal Dictionary<object, OwlIndividual> individuals = [];
     internal HashSet<string> allIndividualNames = [];
 
-    internal OwlGenerator(string @namespace)
+    internal OwlGenerator(string @namespace, string comment = "")
     {
         this.@namespace = @namespace;
+        this.comment = comment;
     }
 
     internal string AddIndividual(object obj)
@@ -219,8 +205,16 @@ internal class OwlGenerator
         if (properties.Any(p => p.range.IsPrimitive || p.range == typeof(string))) // TODO Eca que nooojo.
             sw.WriteLine("Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>");
 
+        sw.WriteLine($"Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>");
         sw.WriteLine();
         sw.WriteLine($"Ontology: <{@namespace}>");
+        sw.WriteLine();
+        if (!string.IsNullOrEmpty(comment))
+        {
+            sw.WriteLine($"Annotations: rdfs:comment \"{comment}\"");
+            sw.WriteLine();
+        }
+        sw.WriteLine($"AnnotationProperty: rdfs:comment");
         sw.WriteLine();
 
         foreach (OwlProperty property in properties)
@@ -286,16 +280,25 @@ internal class OwlGenerator
             if (@class == null || @class == typeof(object))
                 continue;
             sw.WriteLine($"Class: {@class.Name}");
+
+            OwlCommentAttribute? comment = Attribute.GetCustomAttributes(@class)
+                .OfType<OwlCommentAttribute>()
+                .FirstOrDefault();
+            if (comment != null )
+                sw.WriteLine($"  Annotations: rdfs:comment \"{comment.value}\"");
+
             if (@class.BaseType != typeof(object))
                 sw.WriteLine($"  SubClassOf: {@class.BaseType!.Name}");
-            foreach (var attribute in Attribute.GetCustomAttributes(@class))
+
+            OwlDisjointWithAttribute? disjointWith = Attribute.GetCustomAttributes(@class)
+                .OfType<OwlDisjointWithAttribute>()
+                .FirstOrDefault();
+            if (disjointWith != null )
             {
-                if (attribute is OwlDisjointWithAttribute disjointWith)
-                {
-                    foreach (Type type in disjointWith.types)
-                        sw.WriteLine($"  DisjointWith: {type.Name}");
-                }
+                foreach (Type type in disjointWith.types)
+                    sw.WriteLine($"  DisjointWith: {type.Name}");
             }
+
             sw.WriteLine();
         }
 
