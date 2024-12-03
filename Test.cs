@@ -8,7 +8,7 @@ internal class Program
 {
     static void Main()
     {
-        OwlGenerator owl = new OwlGenerator("http://pizza.com");
+        OwlGenerator owl = new OwlGenerator("http://pizza.com", "A ontology for Pizza");
         owl.AddIndividual(new PizzaMushroom(), "mushroomPizza");
         owl.AddIndividual(new Margherita(), "margheritaPizza");
         owl.Render("pizza");
@@ -37,6 +37,7 @@ internal abstract class Pizza
 
 internal abstract class PizzaVeggie : Pizza { }
 
+[OwlComment("A pizza that has Mozzarella and Tomato toppings")]
 internal class Margherita : PizzaVeggie
 {
     internal Margherita()
