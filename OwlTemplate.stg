@@ -17,12 +17,12 @@ typeMap ::= [
     "Boolean":"xsd:boolean"
 ]
 
-decl(namespace, comment, properties, classes, individuals) ::= <<
-Prefix: : <$namespace$/>
+decl(ontology, comment, properties, classes, individuals) ::= <<
+Prefix: : <$ontology$/>
 Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
 Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-Ontology: <$namespace$>
+Ontology: <$ontology$>
 
 $if(comment)$
 Annotations: rdfs:comment "$comment$"
@@ -39,23 +39,25 @@ $individuals:individualDecl(); separator="\n"$
 >>
 
 propertyDecl(property) ::= <<
-$if(property.IsData || property.IsEnum)$
-DataProperty: $property.relation$
-  Domain: $property.domain.Name$
-  $if(property.IsEnum)$
-  Range: { "$property.Enumerators; separator="\", \""$" \}
-  $else$
-  Range: $typeMap.(property.range.Name)$
-  $endif$
+$if(property.range.IsData)$
+DataProperty: $property$
+  Domain: $property.domain$
+  Range: $typeDecl(property.range)$
 $else$
-ObjectProperty: has$property.relation$
-  Domain: $property.domain.Name$
-  Range: $property.range.Name$
-  InverseOf: is$property.relation$Of
-
-ObjectProperty: is$property.relation$Of
+ObjectProperty: $property$
+  Domain: $property.domain$
+  Range: $property.range$
 $endif$
 >>
+typeDecl(type) ::= <%
+$if(type.IsEnum)$
+{ "$type.Enumerators; separator="\", \""$" \}
+$elseif(type.IsData)$
+$typeMap.(type)$
+$else$
+$type$
+$endif$
+%>
 
 classDecl(class) ::= <<
 Class: $class$
@@ -65,9 +67,15 @@ $endif$
 $if(class.SuperClass)$
   SubClassOf: $class.SuperClass$
 $endif$
+$if(class.Properties)$
+  $class.Properties:subClassOfDecl(); separator="\n"$
+$endif$
 $if(class.DisjointWith)$
   $class.DisjointWith:disjointWithDecl(); separator="\n"$
 $endif$
+>>
+subClassOfDecl(property) ::= <<
+SubClassOf: $property$ some $typeDecl(property.range)$
 >>
 disjointWithDecl(type) ::= <<
 DisjointWith: $type$
@@ -83,9 +91,18 @@ $individual.aliases:sameAsDecl(); separator="\n\n"$
 $endif$
 >>
 factDecl(fact) ::= <<
-Facts: $fact.relation$ $fact.individual$
+Facts: $fact.relation$ $valueDecl(fact.value)$
 >>
+valueDecl(value) ::= <%
+$if(value.IsString || value.IsEnum)$
+"$value$"
+$elseif(value.IsBool)$
+$if(value)$true$else$false$endif$
+$else$
+$value$$if(value.IsFloat)$f$endif$
+$endif$
+%>
 sameAsDecl(alias) ::= <<
 Individual: $alias$
-  SameAS: $individual$
+  SameAs: $individual$
 >>
