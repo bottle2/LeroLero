@@ -3,14 +3,20 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using Antlr4.StringTemplate;
+using Antlr4.StringTemplate.Misc;
 
 internal class OwlGenerator
 {
     internal struct OwlProperty
     {
-        internal Type domain;
-        internal string relation;
-        internal Type range;
+        public Type domain;
+        public string relation;
+        public Type range;
+
+        public readonly bool IsData => range.IsPrimitive || range == typeof(string);
+        public readonly bool IsEnum => range.IsEnum;
+        public readonly string[] Enumerators => range.GetEnumNames();
 
         internal OwlProperty(Type domain, string relation, Type range)
         {
@@ -22,8 +28,8 @@ internal class OwlGenerator
 
     internal struct OwlFact // TODO Podia ser um record
     {
-        internal string relation;
-        internal string individual;
+        public string relation;
+        public string individual;
 
         internal OwlFact(string relation, string individual)
         {
@@ -32,17 +38,43 @@ internal class OwlGenerator
         }
     }
 
+    internal class OwlClass
+    {
+        public Type Type;
+        public OwlClass? SuperClass;
+
+        public string? Comment => Attribute.GetCustomAttributes(Type)
+            .OfType<OwlCommentAttribute>()
+            .FirstOrDefault()?.value;
+
+        public IEnumerable<Type> DisjointWith => Attribute.GetCustomAttributes(Type)
+            .OfType<OwlDisjointWithAttribute>()
+            .FirstOrDefault()?.types ?? Enumerable.Empty<Type>();
+
+        internal OwlClass(Type type, OwlClass? superClass)
+        {
+            Type = type;
+            SuperClass = superClass;
+        }
+
+        public override string ToString() => Type.Name;
+    }
+
     internal class OwlIndividual
     {
-        internal List<string> aliases = [];
-        internal List<OwlFact> facts = [];
+        private object obj;
+        public Type type => obj.GetType();
+        public string name;
+        public List<string> aliases = [];
+        public List<OwlFact> facts = [];
 
-        internal string name => aliases[0];
-
-        internal OwlIndividual(string name)
+        internal OwlIndividual(object obj, string name)
         {
-            this.aliases = [name];
+            this.obj = obj;
+            this.name = name;
         }
+
+        public override string ToString() => name;
     }
 
     // TODO Devia ser um URI ou um (uuuuuuuuuurgh) "IRI".
@@ -57,7 +89,7 @@ internal class OwlGenerator
     // monte de tipos que o usuário poderia estender?
     // Ou talvez o usuário devesse colocar um atributo
     // na classe pai que deve "parar"...
-    internal HashSet<Type> classes = [typeof(object), null];
+    internal Dictionary<Type, OwlClass> classes = [];// [typeof(object), null];
 
     internal Dictionary<object, OwlIndividual> individuals = [];
     internal HashSet<string> allIndividualNames = [];
@@ -104,7 +136,7 @@ internal class OwlGenerator
 
         AddClass(obj.GetType());
 
-        individual = new OwlIndividual(UniqueIndividualName(name));
+        individual = new OwlIndividual(obj, UniqueIndividualName(name));
         individuals.Add(obj, individual);
 
         foreach (var memberInfo in obj.GetType().FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic, (m, fc) => true, null))
@@ -157,22 +189,25 @@ internal class OwlGenerator
         return individual.name;
     }
 
-    internal void AddClass(Type @class)
+    internal OwlClass? AddClass(Type? type)
     {
-        Debug.Assert(@class != typeof(ValueType));
+        Debug.Assert(type != typeof(ValueType));
 
-        if (classes.Contains(@class))
-            return;
+        if (type == null || type == typeof(object))
+            return null;
+        if (classes.ContainsKey(type))
+            return classes[type];
 
-        classes.Add(@class);
+        OwlClass klass = new OwlClass(type, AddClass(type.BaseType!));
+        classes.Add(type, klass);
 
         // TODO Deveríamos buscar propriedades também, além de atributos
         // TODO Reconsiderar outros BindingFlag, tipo pegar os públicos?
-        foreach (var memberInfo in @class.FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, (m, fc) => true, null))
+        foreach (var memberInfo in type.FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, (m, fc) => true, null))
         {
             if (memberInfo is FieldInfo fieldInfo)
             {
-                Type domain = @class;
+                Type domain = type;
 
                 // TODO Código duplicado
                 string nameson = fieldInfo.Name;
@@ -193,129 +228,22 @@ internal class OwlGenerator
             }
         }
 
-        AddClass(@class.BaseType!);
+        return klass;
     }
 
     internal void Render(string filename)
     {
-        // TODO E o caminho pra salvar? Atualmente vai pra pasta do projeto/bin/Debug/net8.0/
-        using StreamWriter sw = new($"{filename}.omn", false, System.Text.Encoding.UTF8);
-        sw.WriteLine($"Prefix: : <{@namespace}/>");
+        TemplateGroupFile group = new TemplateGroupFile(Environment.CurrentDirectory + "\\OwlTemplate.stg");
+        group.Listener = new StringTemplateErrorListener();
 
-        if (properties.Any(p => p.range.IsPrimitive || p.range == typeof(string))) // TODO Eca que nooojo.
-            sw.WriteLine("Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>");
+        Template template = group.GetInstanceOf("decl");
+        template.Add("namespace", @namespace);
+        template.Add("comment", comment);
+        template.Add("properties", properties);
+        template.Add("classes", classes.Values);
+        template.Add("individuals", individuals.Values);
 
-        sw.WriteLine($"Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>");
-        sw.WriteLine();
-        sw.WriteLine($"Ontology: <{@namespace}>");
-        sw.WriteLine();
-        if (!string.IsNullOrEmpty(comment))
-        {
-            sw.WriteLine($"Annotations: rdfs:comment \"{comment}\"");
-            sw.WriteLine();
-        }
-        sw.WriteLine($"AnnotationProperty: rdfs:comment");
-        sw.WriteLine();
-
-        foreach (OwlProperty property in properties)
-        {
-            if (property.range.IsPrimitive || property.range == typeof(string)) // TODO Método de extensão?
-            {
-                sw.WriteLine($"DataProperty: {property.relation}");
-                sw.WriteLine($"  Domain:    {property.domain.Name}");
-                if (property.range == typeof(string))
-                    sw.WriteLine("  Range:     xsd:string");
-                else if (property.range == typeof(sbyte))
-                    sw.WriteLine("  Range:     xsd:byte");
-                else if (property.range == typeof(byte))
-                    sw.WriteLine("  Range:     xsd:unsignedByte");
-                else if (property.range == typeof(short))
-                    sw.WriteLine("  Range:     xsd:short");
-                else if (property.range == typeof(ushort))
-                    sw.WriteLine("  Range:     xsd:unsignedShort");
-                else if (property.range == typeof(int))
-                    sw.WriteLine("  Range:     xsd:int");
-                else if (property.range == typeof(uint))
-                    sw.WriteLine("  Range:     xsd:unsignedInt");
-                else if (property.range == typeof(long))
-                    sw.WriteLine("  Range:     xsd:long");
-                else if (property.range == typeof(ulong))
-                    sw.WriteLine("  Range:     xsd:unsignedLong");
-                else if (property.range == typeof(char))
-                    sw.WriteLine("  Range:     xsd:byte");
-                else if (property.range == typeof(float))
-                    sw.WriteLine("  Range:     xsd:float");
-                else if (property.range == typeof(double))
-                    sw.WriteLine("  Range:     xsd:double");
-                else if (property.range == typeof(decimal))
-                    sw.WriteLine("  Range:     xsd:decimal");
-                else if (property.range == typeof(bool))
-                    sw.WriteLine("  Range:     xsd:boolean");
-                else
-                    Debug.Assert("Paniquei!!!!" == null);
-                // TODO Maníacos do Rust, Swift e programação funcional dirão que esse código não tem nada de errado.
-            }
-            else if (property.range.IsEnum)
-            {
-                sw.WriteLine($"DataProperty: {property.relation}");
-                sw.WriteLine($"  Domain:    {property.domain.Name}");
-                sw.WriteLine($"  Range:     {{\"{string.Join("\", \"", property.range.GetEnumNames())}\"}}");
-            }
-            else
-            {
-                // TODO Essa coisa de has{} e is{]Of é claramente uma gambiarra
-                //      Criar uma anotação pro usuário dizer o nome das relações inversas, caso sejam inversas sequer!
-                sw.WriteLine($"ObjectProperty: has{property.relation}");
-                sw.WriteLine($"  Domain:    {property.domain.Name}");
-                sw.WriteLine($"  Range:     {property.range.Name}");
-                sw.WriteLine($"  InverseOf: is{property.relation}Of");
-                sw.WriteLine();
-                sw.WriteLine($"ObjectProperty: is{property.relation}Of");
-                sw.WriteLine();
-            }
-        }
-
-        foreach (Type @class in classes)
-        {
-            if (@class == null || @class == typeof(object))
-                continue;
-            sw.WriteLine($"Class: {@class.Name}");
-
-            OwlCommentAttribute? comment = Attribute.GetCustomAttributes(@class)
-                .OfType<OwlCommentAttribute>()
-                .FirstOrDefault();
-            if (comment != null )
-                sw.WriteLine($"  Annotations: rdfs:comment \"{comment.value}\"");
-
-            if (@class.BaseType != typeof(object))
-                sw.WriteLine($"  SubClassOf: {@class.BaseType!.Name}");
-
-            OwlDisjointWithAttribute? disjointWith = Attribute.GetCustomAttributes(@class)
-                .OfType<OwlDisjointWithAttribute>()
-                .FirstOrDefault();
-            if (disjointWith != null )
-            {
-                foreach (Type type in disjointWith.types)
-                    sw.WriteLine($"  DisjointWith: {type.Name}");
-            }
-
-            sw.WriteLine();
-        }
-
-        foreach ((object obj, OwlIndividual individual) in individuals)
-        {
-            sw.WriteLine($"Individual: {individual.name}");
-            sw.WriteLine($"  Types: {obj.GetType().Name}");
-            foreach (OwlFact fact in individual.facts)
-                sw.WriteLine($"  Facts: {fact.relation} {fact.individual}");
-            sw.WriteLine();
-            for (int i = 1; i < individual.aliases.Count; i++)
-            {
-                sw.WriteLine($"Individual: {individual.aliases[i]}");
-                sw.WriteLine($"  SameAs: {individual.name}");
-                sw.WriteLine();
-            }
-        }
+        File.WriteAllText($"{filename}.omn", template.Render());
     }
 
     private string UniqueIndividualName(string name)
@@ -325,7 +253,7 @@ internal class OwlGenerator
             // O nome do indivíduo é diferente da
             // classe para os links no Protégé
             // irem para os indivíduos
-            string uniqueName = $"{name}_{i}";
+            string uniqueName = $"{name.Replace(' ', '+')}_{i}";
             if (!allIndividualNames.Contains(uniqueName))
             {
                 allIndividualNames.Add(uniqueName);
@@ -333,5 +261,28 @@ internal class OwlGenerator
             }
         }
         throw new ArgumentException("Quantidade de indivíduos para classe excedida!", nameof(name));
+    }
+
+    internal sealed class StringTemplateErrorListener : ITemplateErrorListener
+    {
+        public void CompiletimeError(TemplateMessage msg)
+        {
+            Console.WriteLine($"CompiletimeError: {msg}");
+        }
+
+        public void InternalError(TemplateMessage msg)
+        {
+            Console.WriteLine($"InternalError: {msg}");
+        }
+
+        public void IOError(TemplateMessage msg)
+        {
+            Console.WriteLine($"IOError: {msg}");
+        }
+
+        public void RuntimeError(TemplateMessage msg)
+        {
+            Console.WriteLine($"RuntimeError: {msg}");
+        }
     }
 }

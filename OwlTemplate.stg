@@ -1,0 +1,91 @@
+delimiters "$", "$"
+
+typeMap ::= [
+    "String":"xsd:string",
+    "SByte":"xsd:byte",
+    "Byte":"xsd:unsignedByte",
+    "Int16":"xsd:short",
+    "UInt16":"xsd:unsignedShort",
+    "Int32":"xsd:int",
+    "UInt32":"xsd:unsignedInt",
+    "Int64":"xsd:long",
+    "UInt64":"xsd:unsignedLong",
+    "Char":"xsd:byte",
+    "Single":"xsd:float",
+    "Double":"xsd:double",
+    "Decimal":"xsd:decimal",
+    "Boolean":"xsd:boolean"
+]
+
+decl(namespace, comment, properties, classes, individuals) ::= <<
+Prefix: : <$namespace$/>
+Prefix: xsd: <http://www.w3.org/2001/XMLSchema#>
+Prefix: rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+Ontology: <$namespace$>
+
+$if(comment)$
+Annotations: rdfs:comment "$comment$"
+
+AnnotationProperty: rdfs:comment
+$endif$
+
+$properties:propertyDecl(); separator="\n"$
+
+$classes:classDecl(); separator="\n"$
+
+$individuals:individualDecl(); separator="\n"$
+
+>>
+
+propertyDecl(property) ::= <<
+$if(property.IsData || property.IsEnum)$
+DataProperty: $property.relation$
+  Domain: $property.domain.Name$
+  $if(property.IsEnum)$
+  Range: { "$property.Enumerators; separator="\", \""$" \}
+  $else$
+  Range: $typeMap.(property.range.Name)$
+  $endif$
+$else$
+ObjectProperty: has$property.relation$
+  Domain: $property.domain.Name$
+  Range: $property.range.Name$
+  InverseOf: is$property.relation$Of
+
+ObjectProperty: is$property.relation$Of
+$endif$
+>>
+
+classDecl(class) ::= <<
+Class: $class$
+$if(class.Comment)$
+  Annotations: rdfs:comment "$class.Comment$"
+$endif$
+$if(class.SuperClass)$
+  SubClassOf: $class.SuperClass$
+$endif$
+$if(class.DisjointWith)$
+  $class.DisjointWith:disjointWithDecl(); separator="\n"$
+$endif$
+>>
+disjointWithDecl(type) ::= <<
+DisjointWith: $type$
+>>
+
+individualDecl(individual) ::= <<
+Individual: $individual$
+  Types: $individual.type.Name$
+  $individual.facts:factDecl(); separator="\n"$
+$if(individual.aliases)$
+
+$individual.aliases:sameAsDecl(); separator="\n\n"$
+$endif$
+>>
+factDecl(fact) ::= <<
+Facts: $fact.relation$ $fact.individual$
+>>
+sameAsDecl(alias) ::= <<
+Individual: $alias$
+  SameAS: $individual$
+>>

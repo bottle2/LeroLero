@@ -26,14 +26,17 @@ internal abstract class Topping { }
 
 internal abstract class ToppingVeggie : Topping { }
 
+[OwlDisjointWith(typeof(ToppingVeggie))]
 internal abstract class ToppingCheese : Topping { }
 
 internal class Mushroom : ToppingVeggie { }
 
+[OwlDisjointWith(typeof(Mushroom))]
 internal class Tomato : ToppingVeggie { }
 
 internal class Mozzarella : ToppingCheese { }
 
+[OwlDisjointWith(typeof(Topping))]
 internal abstract class Pizza
 {
     internal Topping[] toppings;
@@ -50,6 +53,7 @@ internal class Margherita : PizzaVeggie
     }
 }
 
+[OwlDisjointWith(typeof(PizzaVeggie))]
 internal class PizzaMushroom : Pizza
 {
     internal PizzaMushroom()
