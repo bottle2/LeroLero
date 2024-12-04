@@ -24,15 +24,24 @@ internal class OwlGenerator
             this.value = value;
         }
 
-        public override readonly string ToString()
+        public override readonly string? ToString()
         {
             if (value is float f)
+            {
                 return f.ToString(numberFormatInfo);
+            }
             else if (value is double d)
+            {
                 return d.ToString(numberFormatInfo);
+            }
             else if (value is decimal dec)
+            {
                 return dec.ToString(numberFormatInfo);
-            return value.ToString();
+            }
+            else
+            {
+                return value.ToString();
+            }
         }
     }
 
@@ -68,7 +77,7 @@ internal class OwlGenerator
         public override string ToString() => relation;
     }
 
-    internal struct OwlFact // TODO Podia ser um record
+    internal struct OwlFact
     {
         public string relation;
         public OwlValue value;
@@ -122,20 +131,11 @@ internal class OwlGenerator
         public override string ToString() => name;
     }
 
-    // TODO Devia ser um URI ou um (uuuuuuuuuurgh) "IRI".
-    internal string ontology = "http://pizza.com";
+    internal Uri ontology;
     internal string comment;
 
-    // TODO MemberInfo não é imutável, por causa do contexto. Não deveríamos estar usando tuplas...
     internal HashSet<OwlProperty> properties = [];
-
-    // TODO Deveria botar ValueType pra excluir
-    // mais tipos, mas talvez devesse excluir um
-    // monte de tipos que o usuário poderia estender?
-    // Ou talvez o usuário devesse colocar um atributo
-    // na classe pai que deve "parar"...
-    internal Dictionary<Type, OwlClass> classes = [];// [typeof(object), null];
-
+    internal Dictionary<Type, OwlClass> classes = [];
     internal Dictionary<object, OwlIndividual> individuals = [];
     internal HashSet<string> allIndividualNames = [];
 
@@ -143,30 +143,14 @@ internal class OwlGenerator
 
     internal OwlGenerator(string ontology, string comment = "")
     {
-        this.ontology = ontology;
+        this.ontology = new Uri(ontology);
         this.comment = comment;
     }
 
     internal OwlIndividual AddIndividual(object obj)
     {
-        // TODO Search for name using reflection.
-        return AddIndividual(obj, FindName(obj)?.Replace(' ', '+') ?? obj.GetType().Name);
-
-        static string? FindName(object obj)
-        {
-            if (
-                obj.GetType()
-                   .GetMembers(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                   .FirstOrDefault(prop => Attribute.IsDefined(prop, typeof(OwlIndividualNameAttribute)))
-                   is MemberInfo mi) // TODO Sei lá como formatar essa joça.
-            {
-                if (mi is PropertyInfo pi && pi.GetValue(obj) is string name0)
-                    return name0;
-                else if (mi is FieldInfo fi && fi.GetValue(obj) is string name)
-                    return name;
-            }
-            return null;
-        }
+        string name = FindIndividualName(obj)?.Replace(' ', '+') ?? UniqueIndividualName(obj.GetType().Name);
+        return AddIndividual(obj, name);
     }
 
     internal OwlIndividual AddIndividual(object obj, string name)
@@ -174,34 +158,35 @@ internal class OwlGenerator
         OwlIndividual? individual;
         if (individuals.TryGetValue(obj, out individual))
         {
-            if (individual.aliases.Contains(name))
-                return individual;
-
-            individual.aliases.Add(UniqueIndividualName(name));
+            if (!individual.aliases.Contains(name))
+                individual.aliases.Add(name);
             return individual;
         }
 
         AddClass(obj.GetType());
 
-        individual = new OwlIndividual(obj, UniqueIndividualName(name));
+        individual = new OwlIndividual(obj, name);
         individuals.Add(obj, individual);
 
-        foreach (var memberInfo in obj.GetType().FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic, (m, fc) => true, null))
-        {
-            if (memberInfo is FieldInfo fieldInfo)
-            {
-                string relation = GetPropertyName(fieldInfo.Name);
+        IEnumerable<FieldInfo> individualFields = obj.GetType()
+            .FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic, (m, fc) => true, null)
+            .OfType<FieldInfo>();
 
-                var fieldValue = fieldInfo.GetValue(obj)!;
-                if (fieldInfo.FieldType != typeof(string) && fieldInfo.FieldType.IsAssignableTo(typeof(IEnumerable)))
+        foreach (FieldInfo fieldInfo in individualFields)
+        {
+            string relation = GetPropertyName(fieldInfo.Name);
+            var fieldValue = fieldInfo.GetValue(obj)!;
+
+            if (fieldValue is not string && fieldValue is IEnumerable fieldEnumerable)
+            {
+                foreach (object fieldIndividual in fieldEnumerable)
                 {
-                    foreach (object fieldIndividual in (IEnumerable)fieldValue)
-                        individual.facts.Add(new OwlFact(relation, AddIndividual(fieldIndividual)));
+                    individual.facts.Add(new OwlFact(relation, AddIndividual(fieldIndividual)));
                 }
-                else
-                {
-                    individual.facts.Add(new OwlFact(relation, fieldValue));
-                }
+            }
+            else
+            {
+                individual.facts.Add(new OwlFact(relation, fieldValue));
             }
         }
 
@@ -213,32 +198,36 @@ internal class OwlGenerator
         Debug.Assert(type != typeof(ValueType));
 
         if (type == null || type == typeof(object))
+        {
             return null;
+        }
+
         if (classes.ContainsKey(type))
+        {
             return classes[type];
+        }
 
         OwlClass klass = new OwlClass(type, AddClass(type.BaseType!));
         classes.Add(type, klass);
 
-        // TODO Deveríamos buscar propriedades também, além de atributos
-        // TODO Reconsiderar outros BindingFlag, tipo pegar os públicos?
-        foreach (var memberInfo in type.FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, (m, fc) => true, null))
+        IEnumerable<FieldInfo> classFields = type
+            .FindMembers(MemberTypes.Field, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, (m, fc) => true, null)
+            .OfType<FieldInfo>();
+
+        foreach (FieldInfo fieldInfo in classFields)
         {
-            if (memberInfo is FieldInfo fieldInfo)
+            Type domain = type;
+            string relation = GetPropertyName(fieldInfo.Name);
+            Type range = fieldInfo.FieldType;
+
+            if (range != typeof(string) && fieldInfo.FieldType.IsAssignableTo(typeof(IEnumerable)))
             {
-                Type domain = type;
-                string relation = GetPropertyName(fieldInfo.Name);
-                Type range = fieldInfo.FieldType;
-
-                if (!range.IsPrimitive && range != typeof(string)) // TODO Código duplicado
-                {
-                    range = fieldInfo.FieldType.IsAssignableTo(typeof(IEnumerable)) ? fieldInfo.FieldType.GetElementType()! : fieldInfo.FieldType!;
-                }
-
-                OwlProperty property = new OwlProperty(domain, relation, range);
-                klass.Properties.Add(property);
-                properties.Add(property);
+                range = fieldInfo.FieldType.GetElementType()!;
             }
+
+            OwlProperty property = new OwlProperty(domain, relation, range);
+            klass.Properties.Add(property);
+            properties.Add(property);
         }
 
         return klass;
@@ -257,6 +246,27 @@ internal class OwlGenerator
         template.Add("individuals", individuals.Values);
 
         File.WriteAllText($"{filename}.omn", template.Render());
+    }
+
+    static string? FindIndividualName(object obj)
+    {
+        MemberInfo? memberInfo = obj.GetType()
+            .GetMembers(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(prop => Attribute.IsDefined(prop, typeof(OwlIndividualNameAttribute)));
+
+        if (memberInfo != null)
+        {
+            if (memberInfo is PropertyInfo property && property.GetValue(obj) is string propertyName)
+            {
+                return propertyName;
+            }
+            else if (memberInfo is FieldInfo field && field.GetValue(obj) is string fieldName)
+            {
+                return fieldName;
+            }
+        }
+
+        return null;
     }
 
     private string UniqueIndividualName(string name)

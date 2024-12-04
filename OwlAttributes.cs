@@ -18,8 +18,6 @@ internal class OwlCommentAttribute : Attribute
 
 internal class OwlDisjointWithAttribute : Attribute
 {
-    // TODO Gerar erro se a classe que possui
-    // o atributo estiver incluída na lista
     internal Type[] types;
 
     internal OwlDisjointWithAttribute(params Type[] types)
